@@ -3,42 +3,101 @@ name: Download and Release
 on:
   workflow_dispatch:
     inputs:
+      type:
+        description: '下载类型'
+        type: choice
+        options:
+          - http
+          - bt
+        default: http
       url:
-        description: '文件链接'
+        description: 'HTTP 链接 或 magnet 链接 / .torrent 文件 URL'
         required: true
       filename:
-        description: '保存文件名（可选）'
+        description: '保存文件名（可选，仅 http 有效）'
         required: false
-        default: 'file'
-      tag:
-        description: '目标 Tag 名称（如 v1.0.0）'
+        default: ''
+      password:
+        description: '7z 压缩密码（必填，不能为空）'
         required: true
 
 permissions:
-  contents: write   # 必须，否则无法创建 Release 或上传资产
+  contents: write
 
 jobs:
   download-and-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Download
+      - name: Set timestamp tag
+        id: tag
+        run: echo "tag=v$(TZ='Asia/Shanghai' date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Validate password
+        run: |
+          if [ -z "${{ inputs.password }}" ]; then
+            echo "密码不能为空"
+            exit 1
+          fi
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full aria2
+
+      - name: Download via HTTP
+        if: inputs.type == 'http'
         run: |
           mkdir -p output
           cd output
           if [ -z "${{ inputs.filename }}" ]; then
-            curl -L -O "${{ inputs.url }}"
+            curl -fL -O "${{ inputs.url }}"
           else
-            curl -L -o "${{ inputs.filename }}" "${{ inputs.url }}"
+            curl -fL -o "${{ inputs.filename }}" "${{ inputs.url }}"
           fi
 
-      - name: Compress
+      - name: Download via BT
+        if: inputs.type == 'bt'
+        run: |
+          mkdir -p output
+          cd output
+          aria2c \
+            --enable-dht=true \
+            --bt-enable-lpd=true \
+            --bt-max-peers=100 \
+            --seed-time=0 \
+            --max-connection-per-server=16 \
+            --split=16 \
+            --file-allocation=none \
+            --dir=. \
+            "${{ inputs.url }}"
+
+      - name: Determine archive name
+        id: name
         run: |
           cd output
-          zip -r ../downloaded.zip .
+          # 取 output 目录里第一个文件/目录名，去掉扩展名作为压缩包名
+          FIRST=$(ls -1 | head -n 1)
+          BASE="${FIRST%.*}"
+          if [ -z "$BASE" ] || [ "$BASE" = "$FIRST" ]; then
+            BASE="$FIRST"
+          fi
+          # 清理非法字符
+          BASE=$(echo "$BASE" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+          if [ -z "$BASE" ]; then
+            BASE="downloaded"
+          fi
+          echo "archive=${BASE}.7z" >> "$GITHUB_OUTPUT"
+          echo "压缩包名: ${BASE}.7z"
+
+      - name: Compress with 7z and password (split volumes)
+        run: |
+          cd output
+          7z a -t7z -v1900m -p"${{ inputs.password }}" -mhe=on "../${{ steps.name.outputs.archive }}" . < /dev/null
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.tag }}
-          files: downloaded.zip
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          files: ${{ steps.name.outputs.archive }}.*
           fail_on_unmatched_files: true
