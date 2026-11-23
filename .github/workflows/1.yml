@@ -1,0 +1,30 @@
+name: Download File
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: '文件链接'
+        required: true
+      filename:
+        description: '保存文件名（可选）'
+        required: false
+        default: ''
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download
+        run: |
+          if [ -z "${{ inputs.filename }}" ]; then
+            curl -L -O "${{ inputs.url }}"
+          else
+            curl -L -o "${{ inputs.filename }}" "${{ inputs.url }}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-file
+          path: .
