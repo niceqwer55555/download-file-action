@@ -7,9 +7,12 @@ on:
         description: '文件链接'
         required: true
       filename:
-        description: '保存文件名（可选）'
+        description: '保存文件名（可选，留空则用链接原名）'
         required: false
-        default: 'file'
+        default: ''
+      password:
+        description: '7z 压缩密码（必填，不能为空）'
+        required: true
 
 permissions:
   contents: write
@@ -20,7 +23,14 @@ jobs:
     steps:
       - name: Set timestamp tag
         id: tag
-        run: echo "tag=v$(date -u +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+        run: echo "tag=v$(TZ='Asia/Shanghai' date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Validate password
+        run: |
+          if [ -z "${{ inputs.password }}" ]; then
+            echo "密码不能为空"
+            exit 1
+          fi
 
       - name: Install 7z
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
@@ -30,15 +40,15 @@ jobs:
           mkdir -p output
           cd output
           if [ -z "${{ inputs.filename }}" ]; then
-            curl -L -O "${{ inputs.url }}"
+            curl -fL -O "${{ inputs.url }}"
           else
-            curl -L -o "${{ inputs.filename }}" "${{ inputs.url }}"
+            curl -fL -o "${{ inputs.filename }}" "${{ inputs.url }}"
           fi
 
       - name: Compress with 7z and password
         run: |
           cd output
-          7z a -t7z -p"${{ secrets.ZIP_PASSWORD }}" -mhe=on ../downloaded.7z .
+          7z a -t7z -p"${{ inputs.password }}" -mhe=on ../downloaded.7z . < /dev/null
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
