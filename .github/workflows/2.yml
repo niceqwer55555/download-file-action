@@ -1,4 +1,4 @@
-name: Download and Release2
+name: Download and Release
 
 on:
   workflow_dispatch:
@@ -45,15 +45,15 @@ jobs:
             curl -fL -o "${{ inputs.filename }}" "${{ inputs.url }}"
           fi
 
-      - name: Compress with 7z and password
+      - name: Compress with 7z and password (split volumes)
         run: |
           cd output
-          7z a -t7z -p"${{ inputs.password }}" -mhe=on ../downloaded.7z . < /dev/null
+          7z a -t7z -v1900m -p"${{ inputs.password }}" -mhe=on ../downloaded.7z . < /dev/null
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-          files: downloaded.7z
+          files: downloaded.7z.*
           fail_on_unmatched_files: true
