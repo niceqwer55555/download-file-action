@@ -17,14 +17,21 @@ jobs:
     steps:
       - name: Download
         run: |
+          mkdir -p output
+          cd output
           if [ -z "${{ inputs.filename }}" ]; then
             curl -L -O "${{ inputs.url }}"
           else
             curl -L -o "${{ inputs.filename }}" "${{ inputs.url }}"
           fi
 
+      - name: Compress
+        run: |
+          cd output
+          zip -r ../downloaded.zip .
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-file
-          path: .
+          path: downloaded.zip
