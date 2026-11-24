@@ -1,0 +1,119 @@
+name: Download and Release4
+
+on:
+  workflow_dispatch:
+    inputs:
+      type:
+        description: '下载类型'
+        type: choice
+        options:
+          - http
+          - bt
+        default: http
+      url:
+        description: 'HTTP 链接 或 magnet 链接 / .torrent 文件 URL'
+        required: true
+      filename:
+        description: '保存文件名（可选，仅 http 有效）'
+        required: false
+        default: ''
+      password:
+        description: '7z 压缩密码（必填，不能为空）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  download-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set timestamp tag
+        id: tag
+        run: echo "tag=v$(TZ='Asia/Shanghai' date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Validate password
+        run: |
+          if [ -z "${{ inputs.password }}" ]; then
+            echo "密码不能为空"
+            exit 1
+          fi
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full aria2 curl
+
+      - name: Download via HTTP
+        if: inputs.type == 'http'
+        run: |
+          mkdir -p output
+          cd output
+          if [ -z "${{ inputs.filename }}" ]; then
+            curl -fL -O "${{ inputs.url }}"
+          else
+            curl -fL -o "${{ inputs.filename }}" "${{ inputs.url }}"
+          fi
+
+      - name: Download via BT
+        if: inputs.type == 'bt'
+        timeout-minutes: 30
+        run: |
+          mkdir -p output
+          cd output
+
+          # 动态拉取最新公共 tracker 列表
+          TRACKERS=$(curl -fsSL https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt | grep -v '^$' | paste -sd, -)
+          if [ -z "$TRACKERS" ]; then
+            echo "Tracker 列表拉取失败，使用内置兜底"
+            TRACKERS="udp://tracker.opentrackr.org:1337/announce,udp://open.stealth.si:80/announce,udp://tracker.torrent.eu.org:451/announce"
+          fi
+          echo "使用 tracker: $TRACKERS"
+
+          aria2c \
+            --enable-dht=true \
+            --enable-peer-exchange=true \
+            --dht-listen-port=6881 \
+            --listen-port=6881 \
+            --bt-enable-lpd=true \
+            --bt-max-peers=200 \
+            --bt-request-peer-speed-limit=50M \
+            --bt-tracker-connect-timeout=10 \
+            --bt-tracker-timeout=10 \
+            --bt-stop-timeout=300 \
+            --bt-tracker="$TRACKERS" \
+            --seed-time=0 \
+            --max-connection-per-server=16 \
+            --split=16 \
+            --file-allocation=none \
+            --dir=. \
+            "${{ inputs.url }}"
+
+      - name: Determine archive name
+        id: name
+        run: |
+          cd output
+          FIRST=$(ls -1 | head -n 1)
+          BASE="${FIRST%.*}"
+          if [ -z "$BASE" ] || [ "$BASE" = "$FIRST" ]; then
+            BASE="$FIRST"
+          fi
+          BASE=$(echo "$BASE" | tr ' ' '_' | tr -cd '[:alnum:]._-')
+          if [ -z "$BASE" ]; then
+            BASE="downloaded"
+          fi
+          echo "archive=${BASE}.7z" >> "$GITHUB_OUTPUT"
+          echo "压缩包名: ${BASE}.7z"
+
+      - name: Compress with 7z and password (split volumes)
+        run: |
+          cd output
+          7z a -t7z -v1900m -p"${{ inputs.password }}" -mhe=on "../${{ steps.name.outputs.archive }}" . < /dev/null
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          files: ${{ steps.name.outputs.archive }}.*
+          fail_on_unmatched_files: true
